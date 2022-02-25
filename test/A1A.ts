@@ -25,6 +25,8 @@ describe(TOKEN_SYMBOL + " Token Test", function () {
     let timeLocked3Contract: A1A;
     let vestingLocked1Contract: A1A;
     let vestingLocked2Contract: A1A;
+    let stakingLocked1Contract: A1A;
+    let stakingLocked2Contract: A1A;
     let owner: string;
     let supervisor: string;
     let ordinary: string;
@@ -36,6 +38,8 @@ describe(TOKEN_SYMBOL + " Token Test", function () {
     let timeLocked3: string;
     let vestingLocked1: string;
     let vestingLocked2: string;
+    let stakingLocked1: string;
+    let stakingLocked2: string;
 
     beforeEach(async function () {
         const accounts = await ethers.getSigners();
@@ -51,6 +55,8 @@ describe(TOKEN_SYMBOL + " Token Test", function () {
         timeLocked3 = await accounts[8].getAddress();
         vestingLocked1 = await accounts[9].getAddress();
         vestingLocked2 = await accounts[10].getAddress();
+        stakingLocked1 = await accounts[11].getAddress();
+        stakingLocked2 = await accounts[12].getAddress();
 
         const Contract = await ethers.getContractFactory(TOKEN_SYMBOL, ownerSigner);
         contract = (await Contract.deploy()) as A1A;
@@ -64,6 +70,8 @@ describe(TOKEN_SYMBOL + " Token Test", function () {
         timeLocked3Contract = contract.connect(accounts[8]);
         vestingLocked1Contract = contract.connect(accounts[9]);
         vestingLocked2Contract = contract.connect(accounts[10]);
+        stakingLocked1Contract = contract.connect(accounts[11]);
+        stakingLocked2Contract = contract.connect(accounts[12]);
 
         await contract.transferSupervisorOwnership(supervisor);
     });
@@ -268,7 +276,7 @@ describe(TOKEN_SYMBOL + " Token Test", function () {
             expect(await contract.getTimeLockLength(timeLocked2)).to.equal(1);
             expect(await contract.getTimeLockedAmount(timeLocked2)).to.equal(lockedAmount * 4 + 100);
 
-            await expectRevert(timeLocked2Contract.transfer(owner, lockedAmount), ERRORS.LOCKABLE_TRANSFER_FROM_LOCKED_ACCOUNT);
+            await expectRevert(timeLocked2Contract.transfer(owner, lockedAmount), ERRORS.LOCKABLE_INSUFFICIENT_AMOUNT);
             expect(await contract.balanceOf(timeLocked2)).to.equal(transferredAmount);
 
             await timeLocked2Contract.transfer(owner, lockedAmount - 100);
@@ -292,7 +300,7 @@ describe(TOKEN_SYMBOL + " Token Test", function () {
             expect(await contract.getTimeLockLength(timeLocked3)).to.equal(1);
             expect(await contract.getTimeLockedAmount(timeLocked3)).to.equal(lockedAmount * 4 + 100);
 
-            await expectRevert(timeLocked3Contract.transfer(owner, lockedAmount), ERRORS.LOCKABLE_TRANSFER_FROM_LOCKED_ACCOUNT);
+            await expectRevert(timeLocked3Contract.transfer(owner, lockedAmount), ERRORS.LOCKABLE_INSUFFICIENT_AMOUNT);
             expect(await contract.balanceOf(timeLocked3)).to.equal(transferredAmount);
 
             timeLockInfo = await contract.getTimeLock(timeLocked3, 0);
@@ -360,7 +368,7 @@ describe(TOKEN_SYMBOL + " Token Test", function () {
             await lockerContract.addVestingLock(vestingLocked1, startsAt, period, count);
             expect(await contract.getVestingLockedAmount(vestingLocked1)).to.equal(transferredAmount);
 
-            await expectRevert(vestingLocked1Contract.transfer(owner, lockedAmount), ERRORS.LOCKABLE_TRANSFER_FROM_LOCKED_ACCOUNT);
+            await expectRevert(vestingLocked1Contract.transfer(owner, lockedAmount), ERRORS.LOCKABLE_INSUFFICIENT_AMOUNT);
             expect(await contract.balanceOf(vestingLocked1)).to.equal(transferredAmount);
         });
 
@@ -382,7 +390,7 @@ describe(TOKEN_SYMBOL + " Token Test", function () {
             await lockerContract.addVestingLock(vestingLocked2, startsAt, period, count);
             expect(await contract.getVestingLockedAmount(vestingLocked2)).to.equal(transferredAmount);
 
-            await expectRevert(vestingLocked2Contract.transfer(owner, transferredAmount), ERRORS.LOCKABLE_TRANSFER_FROM_LOCKED_ACCOUNT);
+            await expectRevert(vestingLocked2Contract.transfer(owner, transferredAmount), ERRORS.LOCKABLE_INSUFFICIENT_AMOUNT);
             expect(await contract.balanceOf(vestingLocked2)).to.equal(transferredAmount);
 
             await timeTravel(oneMonthToSec + 1);
@@ -390,6 +398,73 @@ describe(TOKEN_SYMBOL + " Token Test", function () {
 
             await vestingLocked2Contract.transfer(owner, releasedAmountPerMonth);
             expect(await contract.balanceOf(vestingLocked2)).to.equal(transferredAmount - releasedAmountPerMonth);
+        });
+
+        it("5-8 should staking lock add and remove work right", async () => {
+            await contract.deployed();
+            const transferredAmount: number = 50000;
+            const lockedAmount: number = 10000;
+            let now: number = Date.now();
+            let stakingLockInfo = [];
+
+            await contract.addLocker(locker);
+            expect(await contract.isLocker(locker)).to.equal(true);
+
+            await contract.transfer(stakingLocked1, transferredAmount);
+            expect(await contract.balanceOf(stakingLocked1)).to.equal(transferredAmount);
+
+            await stakingLocked1Contract.addStakingLock(lockedAmount);
+            expect(await contract.getStakingLockLength(stakingLocked1)).to.equal(1);
+            expect(await contract.getStakingLockedAmount(stakingLocked1)).to.equal(lockedAmount);
+
+            await stakingLocked1Contract.addStakingLock(lockedAmount + 100);
+            expect(await contract.getStakingLockLength(stakingLocked1)).to.equal(2);
+            expect(await contract.getStakingLockedAmount(stakingLocked1)).to.equal(lockedAmount * 2 + 100);
+
+            await stakingLocked1Contract.addStakingLock(lockedAmount + 200);
+            expect(await contract.getStakingLockLength(stakingLocked1)).to.equal(3);
+            expect(await contract.getStakingLockedAmount(stakingLocked1)).to.equal(lockedAmount * 3 + 300);
+
+            stakingLockInfo = await contract.getStakingLock(stakingLocked1, 0);
+            expect(stakingLockInfo[0]).to.equal(lockedAmount);
+
+            stakingLockInfo = await contract.getStakingLock(stakingLocked1, 1);
+            expect(stakingLockInfo[0]).to.equal(lockedAmount + 100);
+
+            stakingLockInfo = await contract.getStakingLock(stakingLocked1, 2);
+            expect(stakingLockInfo[0]).to.equal(lockedAmount + 200);
+
+            await expectRevert(lockerContract.removeStakingLock(), ERRORS.STAKING_LOCK_NO_LOCK);
+            expect(await contract.getStakingLockLength(stakingLocked1)).to.equal(3);
+
+            await stakingLocked1Contract.removeStakingLock();
+            expect(await contract.getStakingLockLength(stakingLocked1)).to.equal(0);
+            expect(await contract.getStakingLockedAmount(stakingLocked1)).to.equal(0);
+        });
+
+        it("5-9 should staking lock and transfer", async () => {
+            await contract.deployed();
+            const transferredAmount = 50000;
+            const lockedAmount = 10000;
+
+            await contract.addLocker(locker);
+            expect(await contract.isLocker(locker)).to.equal(true);
+            await contract.transfer(locker, transferredAmount);
+            expect(await contract.balanceOf(locker)).to.equal(transferredAmount);
+
+            await lockerContract.transferWithStakingLock(stakingLocked2, lockedAmount);
+            expect(await contract.balanceOf(stakingLocked2)).to.equal(lockedAmount);
+            expect(await contract.getStakingLockLength(stakingLocked2)).to.equal(1);
+            expect(await contract.getStakingLockedAmount(stakingLocked2)).to.equal(lockedAmount);
+
+            await lockerContract.transferWithStakingLock(stakingLocked2, lockedAmount + 100);
+            expect(await contract.balanceOf(stakingLocked2)).to.equal(lockedAmount * 2 + 100);
+            expect(await contract.getStakingLockLength(stakingLocked2)).to.equal(2);
+            expect(await contract.getStakingLockedAmount(stakingLocked2)).to.equal(lockedAmount * 2 + 100);
+
+            await stakingLocked2Contract.removeStakingLock();
+            expect(await contract.getStakingLockLength(stakingLocked2)).to.equal(0);
+            expect(await contract.getStakingLockedAmount(stakingLocked2)).to.equal(0);
         });
     });
 });

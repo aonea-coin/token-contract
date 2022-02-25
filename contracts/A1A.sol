@@ -948,9 +948,15 @@ contract Lockable is Context {
         uint256 count;
     }
 
+    struct StakingLock {
+        uint256 amount;
+        uint256 startsAt;
+    }
+
     mapping(address => bool) private _lockers;
     mapping(address => TimeLock[]) private _timeLocks;
     mapping(address => VestingLock) private _vestingLocks;
+    mapping(address => StakingLock[]) private _stakingLocks;
 
     event LockerAdded(address indexed account);
     event LockerRemoved(address indexed account);
@@ -958,6 +964,8 @@ contract Lockable is Context {
     event TimeUnlocked(address indexed account);
     event VestingLocked(address indexed account);
     event VestingUnlocked(address indexed account);
+    event StakingLocked(address indexed account);
+    event StakingUnlocked(address indexed account);
 
     /**
      * @dev Throws if called by any account other than the locker.
@@ -1132,6 +1140,73 @@ contract Lockable is Context {
         }
         return vestingLockedAmount;
     }
+
+    /**
+     * @dev Add staking lock, only sender and locker can add.
+      max count set for preventing overuse of gas fee when delete.
+     * @param account The address who add staking lock amount.
+     * @param amount Staking lock amount.
+     */
+    function _addStakingLock(address account, uint256 amount) internal {
+        require(amount > 0, "Staking Lock: lock amount must be greater than 0");
+        require(_stakingLocks[account].length <= 50, "Staking Lock: staking count must below max");
+        _stakingLocks[account].push(StakingLock(amount, block.timestamp));
+        emit StakingLocked(account);
+    }
+
+    /**
+     * @dev Remove whole staking lock, any sender can remove
+     * @param account The address want to remove staking lock
+     */
+    function _removeStakingLock(address account) internal {
+        require(_stakingLocks[account].length > 0, "Staking Lock: no lock");
+        delete _stakingLocks[account];
+        emit StakingUnlocked(account);
+    }
+
+    /**
+     * @dev Get staking lock array length
+     * @param account The address want to know the staking lock length.
+     * @return staking lock length
+     */
+    function getStakingLockLength(address account) public view returns (uint256) {
+        return _stakingLocks[account].length;
+    }
+
+    /**
+     * @dev Get staking lock info
+     * @param account The address want to know the staking lock state.
+     * @param index staking lock index
+     * @return staking lock info
+     */
+    function getStakingLock(address account, uint8 index) public view returns (uint256, uint256) {
+        require(_stakingLocks[account].length > index && index >= 0, "Staking Lock: index must be valid");
+        return (_stakingLocks[account][index].amount, _stakingLocks[account][index].startsAt);
+    }
+
+    /**
+     * @dev Get staking lock amount
+     * @param account The address want to know the staking lock
+     * @return staking locked amount
+     */
+    function getStakingLockedAmount(address account) public view returns (uint256) {
+        uint256 stakingLockedAmount = 0;
+
+        uint256 len = _stakingLocks[account].length;
+        for (uint256 i = 0; i < len; i++) {
+            stakingLockedAmount += _stakingLocks[account][i].amount;
+        }
+        return stakingLockedAmount;
+    }
+
+    /**
+     * @dev Get all locked amount
+     * @param account The address want to know the all locked amount
+     * @return all locked amount
+     */
+    function getAllLockedAmount(address account) public view returns (uint256) {
+        return getTimeLockedAmount(account) + getVestingLockedAmount(account) + getStakingLockedAmount(account);
+    }
 }
 
 /**
@@ -1167,7 +1242,7 @@ contract A1A is Pausable, Ownable, Supervisable, Burnable, Freezable, Lockable, 
         require(!isFreezed(to), "Freezable: token transfer to freezed account");
         require(!isFreezed(_msgSender()), "Freezable: token transfer called from freezed account");
         require(!paused(), "Pausable: token transfer while paused");
-        require(balanceOf(from) - getTimeLockedAmount(from) - getVestingLockedAmount(from) >= amount, "Lockable: token transfer from locked account");
+        require(balanceOf(from) - getAllLockedAmount(from) >= amount, "Lockable: insuffient transfer amount");
     }
 
     /**
@@ -1303,5 +1378,28 @@ contract A1A is Pausable, Ownable, Supervisable, Burnable, Freezable, Lockable, 
      */
     function removeVestingLock(address account) public onlySupervisor whenNotPaused {
         _removeVestingLock(account);
+    }
+
+    /**
+     * @dev any one can add staking lock
+     */
+    function addStakingLock(uint256 amount) public whenNotPaused {
+        require(balanceOf(_msgSender()) - getAllLockedAmount(_msgSender()) >= amount, "Staking Lock: lock amount must be greater than available");
+        _addStakingLock(_msgSender(), amount);
+    }
+
+    /**
+     * @dev any one can remove their staking lock
+     */
+    function removeStakingLock() public whenNotPaused {
+        _removeStakingLock(_msgSender());
+    }
+
+    /**
+     * @dev only locker can transfer and add staking lock
+     */
+    function transferWithStakingLock(address to, uint256 amount) public onlyLocker whenNotPaused {
+        transfer(to, amount);
+        _addStakingLock(to, amount);
     }
 }
